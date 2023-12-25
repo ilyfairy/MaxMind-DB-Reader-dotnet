@@ -1,5 +1,6 @@
 ﻿#region
 
+using MaxMind.Db.Helpers;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -333,7 +334,7 @@ namespace MaxMind.Db
 
         private int FindAddressInTree(IPAddress address, out int prefixLength)
         {
-            var rawAddress = address.GetAddressBytes();
+            var rawAddress = address.GetAddressReadOnlySpanBytes();
 
             var bitLength = rawAddress.Length * 8;
             var record = StartNode(bitLength);

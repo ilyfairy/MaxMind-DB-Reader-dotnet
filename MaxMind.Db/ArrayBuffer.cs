@@ -1,6 +1,8 @@
 ﻿#region
 
+using MaxMind.Db.Helpers;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -12,6 +14,7 @@ namespace MaxMind.Db
     internal sealed class ArrayBuffer : Buffer
     {
         private readonly byte[] _fileBytes;
+        private readonly Dictionary<ReadOnlyMemory<byte>, string> utf8StringCache = new(new MemoryByteEqualityComparer());
 
         public ArrayBuffer(byte[] array)
         {
@@ -101,7 +104,27 @@ namespace MaxMind.Db
         public override byte ReadOne(long offset) => _fileBytes[offset];
 
         public override string ReadString(long offset, int count)
-            => Encoding.UTF8.GetString(_fileBytes, (int)offset, count);
+        {
+            if (count <= 30)
+            {
+                // 200_000 Count GetCity
+                // memory: 1.3GB -> 710MB
+                var memory = _fileBytes.AsMemory((int)offset, count);
+
+                if (utf8StringCache.TryGetValue(memory, out var str))
+                {
+                    return str;
+                }
+                else
+                {
+                    str = Encoding.UTF8.GetString(_fileBytes, (int)offset, count);
+                    utf8StringCache.Add(memory.ToArray().AsMemory(), str);
+                    return str;
+                }
+            }
+
+            return Encoding.UTF8.GetString(_fileBytes, (int)offset, count);
+        }
 
         /// <summary>
         ///     Read an int from the buffer.

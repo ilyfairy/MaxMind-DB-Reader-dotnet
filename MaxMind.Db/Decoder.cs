@@ -169,7 +169,10 @@ namespace MaxMind.Db
                     return result;
 
                 case ObjectType.Map:
-                    return DecodeMap(expectedType, offset, size, out outOffset, injectables, network);
+                    {
+                        var map = DecodeMap(expectedType, offset, size, out outOffset, injectables, network);
+                        return map;
+                    }
 
                 case ObjectType.Array:
                     return DecodeArray(expectedType, size, offset, out outOffset, injectables, network);
@@ -316,6 +319,12 @@ namespace MaxMind.Db
         private object DecodeMapToDictionary(Type expectedType, long offset, int size, out long outOffset,
             InjectableValues? injectables, Network? network)
         {
+            if (expectedType == typeof(IReadOnlyDictionary<string, string>) || expectedType == typeof(IDictionary<string, string>) || expectedType == typeof(Dictionary<string, string>))
+            {
+                // 200_000 Count GetCity
+                // time: 4380ms -> 4250ms
+                return DecodeMapToDictionary(offset, size, out outOffset, injectables, network);
+            }
             var genericArgs = expectedType.GetGenericArguments();
             if (genericArgs.Length != 2)
             {
@@ -337,6 +346,23 @@ namespace MaxMind.Db
             return obj;
         }
 
+        private Dictionary<string,string> DecodeMapToDictionary(long offset, int size, out long outOffset,
+            InjectableValues? injectables, Network? network)
+        {
+            var obj = new Dictionary<string, string>(size);
+
+            for (var i = 0; i < size; i++)
+            {
+                var key = (string)Decode(typeof(string), offset, out offset);
+                var value = (string)Decode(typeof(string), offset, out offset, injectables, network);
+                obj.Add(key, value);
+            }
+
+            outOffset = offset;
+
+            return obj;
+        }
+
         private object DecodeMapToType(
             Type expectedType,
             long offset,
@@ -348,7 +374,7 @@ namespace MaxMind.Db
         {
             var constructor = _typeAcivatorCreator.GetActivator(expectedType);
             var parameters = constructor.DefaultParameters();
-
+            
             for (var i = 0; i < size; i++)
             {
                 var key = DecodeKey(offset, out offset);
@@ -495,19 +521,16 @@ namespace MaxMind.Db
         private object DecodeArray(Type expectedType, int size, long offset, out long outOffset,
             InjectableValues? injectables, Network? network)
         {
-            var genericArgs = expectedType.GetGenericArguments();
-            var argType = genericArgs.Length == 0 ? typeof(object) : genericArgs[0];
-            var interfaceType = typeof(ICollection<>).MakeGenericType(argType);
-            if (interfaceType == null)
+            if(expectedType.GetGenericTypeDefinition() == typeof(IReadOnlyList<>))
             {
-                throw new DeserializationException("Unexpected null generic type while decoding array");
+                return DecodeIReadOnlyList(expectedType.GetGenericArguments()[0], size, offset, out outOffset, injectables, network);
             }
 
-            var addMethod = interfaceType.GetMethod("Add");
-            if (addMethod == null)
-            {
-                throw new DeserializationException("Missing Add method when decoding array");
-            }
+            var genericArgs = expectedType.GetGenericArguments();
+            var argType = genericArgs.Length == 0 ? typeof(object) : genericArgs[0];
+            var interfaceType = typeof(ICollection<>).MakeGenericType(argType) ?? throw new DeserializationException("Unexpected null generic type while decoding array");
+
+            var addMethod = interfaceType.GetMethod("Add") ?? throw new DeserializationException("Missing Add method when decoding array");
 
             var array = _listActivatorCreator.GetActivator(expectedType)(size);
             for (var i = 0; i < size; i++)
@@ -516,6 +539,19 @@ namespace MaxMind.Db
                 addMethod.Invoke(array, new[] { r });
             }
 
+            outOffset = offset;
+            return array;
+        }
+
+        private Array DecodeIReadOnlyList(Type itemType, int size, long offset, out long outOffset,
+            InjectableValues? injectables, Network? network)
+        {
+            var array = Array.CreateInstance(itemType, size);
+            for (var i = 0; i < size; i++)
+            {
+                var r = Decode(itemType, offset, out offset, injectables, network);
+                array.SetValue(r, i);
+            }
             outOffset = offset;
             return array;
         }

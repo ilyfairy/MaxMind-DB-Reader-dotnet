@@ -1,8 +1,11 @@
 ﻿#region
 
+using MaxMind.Db.Helpers;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.MemoryMappedFiles;
+using System.Runtime.InteropServices;
 using System.Text;
 
 #endregion
@@ -15,6 +18,8 @@ namespace MaxMind.Db
         private readonly MemoryMappedFile _memoryMappedFile;
         private readonly MemoryMappedViewAccessor _view;
         private bool _disposed;
+
+        private readonly Dictionary<ReadOnlyMemorySpan<byte>, string> utf8StringCache = new();
 
         internal MemoryMapBuffer(string file, bool useGlobalNamespace) : this(file, useGlobalNamespace, new FileInfo(file))
         {
@@ -81,6 +86,27 @@ namespace MaxMind.Db
                 try
                 {
                     _view.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
+
+                    if (count <= 30)
+                    {
+                        // 200_000 Count GetCity
+                        // memory: 1.3GB -> 710MB
+
+                        var span = new ReadOnlyMemorySpan<byte>((IntPtr)(ptr + offset), count);
+                        if (utf8StringCache.TryGetValue(span, out var str)) // Assume that `SafeMemoryMappedViewHandle.AcquirePointer` can get the same address
+                        {
+                            return str;
+                        }
+                        else
+                        {
+                            str = Encoding.UTF8.GetString(ptr + offset, count);
+                            var key = new byte[count];
+                            Marshal.Copy((nint)(ptr + offset), key, 0, count);
+                            utf8StringCache.Add(new ReadOnlyMemorySpan<byte>(key), str);
+                            return str;
+                        }
+                    }
+
                     return Encoding.UTF8.GetString(ptr + offset, count);
                 }
                 finally
